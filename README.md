@@ -1,70 +1,52 @@
-# Getting Started with Create React App
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.saml2.provider.service.registration.*;
+import org.springframework.security.saml2.credentials.Saml2X509Credential;
+import org.springframework.security.web.SecurityFilterChain;
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
 
-## Available Scripts
+@Configuration
+public class SecurityConfig {
 
-In the project directory, you can run:
+  @Bean
+  SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http
+      .authorizeHttpRequests(auth -> auth
+        .requestMatchers("/").permitAll()
+        .anyRequest().authenticated())
+      .saml2Login(withDefaults -> {})
+      .logout(l -> l.logoutSuccessUrl("/"));
+    return http.build();
+  }
 
-### `npm start`
+  @Bean
+  RelyingPartyRegistrationRepository relyingPartyRegistrationRepository() throws Exception {
+    // Load SP private key + cert for decryption
+    var ks = KeyStore.getInstance("PKCS12");
+    ks.load(new ClassPathResource("sp-keystore.p12").getInputStream(),
+            "changeit".toCharArray());
+    var key = (PrivateKey) ks.getKey("sp-decrypt", "changeit".toCharArray());
+    var cert = (X509Certificate) ks.getCertificate("sp-decrypt");
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+    Saml2X509Credential decryption = Saml2X509Credential.decryption(key, cert);
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+    // Build from Entra metadata (verification certs auto-loaded)
+    RelyingPartyRegistration registration =
+      RelyingPartyRegistrations
+        .fromMetadataLocation("https://login.microsoftonline.com/<TENANT_ID>/federationmetadata/2007-06/federationmetadata.xml?appid=<APP_ID>")
+        .registrationId("entra")
+        .entityId("urn:your-sp:example")
+        .assertionConsumerServiceLocation("https://your-sp.example.com/login/saml2/sso/entra")
+        .decryptionX509Credentials(creds -> creds.add(decryption))
+        // (Optional) sign AuthnRequests if Entra requires it:
+        // .signingX509Credentials(creds -> creds.add(Saml2X509Credential.signing(key, cert)))
+        .build();
 
-### `npm test`
-
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+    return new InMemoryRelyingPartyRegistrationRepository(registration);
+  }
+}
